@@ -1,0 +1,6 @@
+# resources/meta_ip_ranges.txt
+# Each line contains a CIDR range (e.g., 157.240.0.0/16)
+157.240.0.0/16
+179.60.192.0/22
+185.60.216.0/22
+# Add more as needed

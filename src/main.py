@@ -1,18 +1,11 @@
 import pyshark
 import csv
 import os
-import whatsapp_analysis  # The second file
+import whatsapp_analysis  
 
 
 def convert_pcap_to_csv(pcap_file_path, csv_file_path):
-    """
-    Convert a pcap file to a CSV file containing packet information.
-
-    Args:
-        pcap_file_path (str): Path to the input pcap file.
-        csv_file_path (str): Path to the output CSV file.
-    """
-    # Open the pcapng file for reading
+    
     capture = pyshark.FileCapture(pcap_file_path, display_filter='ip')  # Use display_filter if needed
 
     # Get the sniff time of the first packet
@@ -60,12 +53,30 @@ def convert_pcap_to_csv(pcap_file_path, csv_file_path):
 
 
 def main():
+
+
+
+    
+    
+
+
     # Modify this list to specify different WhatsApp group types for analysis
     GROUPS = ['Message', 'Photo', 'Audio', 'Video']
     # GROUPS = ['YesFilter', 'NoFilter']
     for group in GROUPS:
-        pcap_file_path = f"resources/{group}s_record.pcap"
-        csv_file_path = f"resources/{group}s_record.csv"
+        BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+        pcap_file_path = os.path.join(BASE_DIR, "resources", f"{group}s_record.pcap")
+        csv_file_path = os.path.join(BASE_DIR, "resources", f"{group}s_record.csv")
+
+    
+        
+      
+        print("Current working directory:", os.getcwd())
+        print("Expected path:", os.path.abspath(pcap_file_path))
+        print("Exists:", os.path.exists(pcap_file_path))
+
+        
         if not os.path.exists(pcap_file_path):
             raise FileNotFoundError(f"{pcap_file_path} does not exist.")
         try:
