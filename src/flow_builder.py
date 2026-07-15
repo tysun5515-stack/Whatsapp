@@ -27,15 +27,8 @@ def rebuild_flows(
     burst_threshold: float = 1.0
 ) -> List[Dict[str, Any]]:
     """
-    Groups packet records into flows based on direction-agnostic 5-tuple:
-    (ip_a, port_a, ip_b, port_b, protocol), normalized so both directions of
-    one conversation land in the same key.
-    
-    Closes a flow and starts a new one on the same key if the inactivity gap exceeds 
-    inactivity_timeout.
-    
-    Back-fills the packet 'direction' field as either 'upload' or 'download', and
-    computes detailed flow summary statistics.
+    Groups packet records into flows and computes statistics.
+    Returns the full flow dictionaries including 'packets'.
     """
     # 1. Filter out non-IP packets (must have src_ip and dst_ip)
     ip_packets = [p for p in packet_records if p["src_ip"] is not None and p["dst_ip"] is not None]
@@ -82,9 +75,7 @@ def rebuild_flows(
     # Sort completed flows by start_time
     completed_flows.sort(key=lambda x: x["start_time"])
     
-    # 3. Compute detailed statistics for each completed flow
-    flow_summaries: List[Dict[str, Any]] = []
-    
+    # 3. Compute detailed statistics (adding fields to 'flow' dict)
     for idx, flow in enumerate(completed_flows, start=1):
         # Back-fill each packet's direction based on flow's client
         client_ip = flow["client_ip"]
@@ -108,31 +99,37 @@ def rebuild_flows(
         upload_packets = [p for p in packets if p["direction"] == "upload"]
         download_packets = [p for p in packets if p["direction"] == "download"]
         
-        upload_packet_count = len(upload_packets)
-        download_packet_count = len(download_packets)
-        
-        upload_bytes = sum(p["length"] for p in upload_packets)
-        download_bytes = sum(p["length"] for p in download_packets)
-        
         # Sizes
         lengths = [p["length"] for p in packets]
-        average_packet_size = sum(lengths) / packet_count if packet_count > 0 else 0.0
-        maximum_packet_size = max(lengths) if packet_count > 0 else 0
-        minimum_packet_size = min(lengths) if packet_count > 0 else 0
+        
+        # Update flow object in-place
+        flow.update({
+            "flow_id": idx,
+            "pcap_id": pcap_id,
+            "end_time": end_time,
+            "duration": duration,
+            "packet_count": packet_count,
+            "upload_packet_count": len(upload_packets),
+            "download_packet_count": len(download_packets),
+            "upload_bytes": sum(p["length"] for p in upload_packets),
+            "download_bytes": sum(p["length"] for p in download_packets),
+            "average_packet_size": sum(lengths) / packet_count if packet_count > 0 else 0.0,
+            "maximum_packet_size": max(lengths) if packet_count > 0 else 0,
+            "minimum_packet_size": min(lengths) if packet_count > 0 else 0
+        })
         
         # Inter-arrival Times (IAT)
         iats = [packets[i]["timestamp"] - packets[i-1]["timestamp"] for i in range(1, packet_count)]
-        
-        inter_arrival_mean = sum(iats) / len(iats) if len(iats) > 0 else 0.0
+        flow["inter_arrival_mean"] = sum(iats) / len(iats) if len(iats) > 0 else 0.0
         
         if len(iats) < 2:
-            inter_arrival_std = 0.0
+            flow["inter_arrival_std"] = 0.0
         else:
-            mean_iat = inter_arrival_mean
+            mean_iat = flow["inter_arrival_mean"]
             variance = sum((x - mean_iat) ** 2 for x in iats) / len(iats)
-            inter_arrival_std = math.sqrt(variance)
+            flow["inter_arrival_std"] = math.sqrt(variance)
             
-        # Burst Count: a contiguous run of packets with inter-arrival gaps below burst_threshold
+        # Burst Count
         burst_count = 0
         in_burst = False
         for gap in iats:
@@ -142,31 +139,6 @@ def rebuild_flows(
                     in_burst = True
             else:
                 in_burst = False
-                
-        # Flow Summary Record
-        summary = {
-            "flow_id": idx,
-            "pcap_id": pcap_id,
-            "client_ip": client_ip,
-            "server_ip": flow["server_ip"],
-            "client_port": client_port,
-            "server_port": flow["server_port"],
-            "start_time": start_time,
-            "end_time": end_time,
-            "duration": duration,
-            "packet_count": packet_count,
-            "upload_packet_count": upload_packet_count,
-            "download_packet_count": download_packet_count,
-            "upload_bytes": upload_bytes,
-            "download_bytes": download_bytes,
-            "average_packet_size": average_packet_size,
-            "maximum_packet_size": maximum_packet_size,
-            "minimum_packet_size": minimum_packet_size,
-            "inter_arrival_mean": inter_arrival_mean,
-            "inter_arrival_std": inter_arrival_std,
-            "burst_count": burst_count,
-            "protocol_type": flow["protocol_type"]
-        }
-        flow_summaries.append(summary)
+        flow["burst_count"] = burst_count
         
-    return flow_summaries
+    return completed_flows
