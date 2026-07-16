@@ -1,6 +1,7 @@
 import os
 import uuid
 import csv
+import sqlite3
 from flask import Flask, render_template, request, redirect, url_for, send_file
 
 # Add src to the path to import the pipeline
@@ -84,5 +85,27 @@ def create_app():
     def download_flows(file_id):
         output_dir = os.path.join(app.config['RESULTS_FOLDER'], file_id)
         return send_file(os.path.join(output_dir, 'flow_summary.csv'), as_attachment=True)
+
+    @app.route('/parties/<file_id>')
+    def parties(file_id):
+        # Read from parties table
+        conn = sqlite3.connect(os.path.join(BASE_DIR, 'whatsapp.db'))
+        conn.row_factory = sqlite3.Row
+        cursor = conn.cursor()
+        
+        # We need the pcap filename from our registry, or use the UUID to look it up.
+        # Actually, our db stored it under the filename itself (e.g. Messages_record.pcap)
+        # Wait, the app registers files using `uuid_filename` which is `file_id`.
+        # So we query using `file_id`.
+        cursor.execute("SELECT * FROM parties WHERE pcap_id = ?", (file_id,))
+        parties_data = [dict(row) for row in cursor.fetchall()]
+        conn.close()
+        
+        return render_template('parties.html', file_id=file_id, parties=parties_data)
+
+    @app.route('/results/<file_id>/charts/<chart_name>')
+    def serve_chart(file_id, chart_name):
+        output_dir = os.path.join(app.config['RESULTS_FOLDER'], file_id)
+        return send_file(os.path.join(output_dir, chart_name))
         
     return app

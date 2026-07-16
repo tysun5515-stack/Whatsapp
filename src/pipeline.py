@@ -19,9 +19,11 @@ from src.whatsapp_filter import (
     check_inference_matching, seed_confirmed_servers, 
     guess_media_type, CONFIRMED_WHATSAPP_SERVERS
 )
+from src.db import init_db, insert_whatsapp_packets
 
 def run_pipeline(pcap_path, output_dir):
     try:
+        init_db()
         if not os.path.exists(output_dir):
             os.makedirs(output_dir)
         
@@ -40,34 +42,52 @@ def run_pipeline(pcap_path, output_dir):
             writer.writeheader()
             writer.writerows(packet_records)
             
-        # 2. Build flows (using optimized params from Task 6: 30s, 0.3s)
+        # 2. Build flows
         flows = rebuild_flows(packet_records, pcap_id=os.path.basename(pcap_path),
                               inactivity_timeout=30.0, burst_threshold=0.3)
         
         # 3. Classify flows
         CONFIRMED_WHATSAPP_SERVERS.clear()
         
-        # We need the full flow objects with packets for classification and CSV output
-        # Rebuild flows but keep packet info
-        # Let's just modify the rebuild_flows or do classification during building.
-        # Actually, let's keep the reconstruction logic and add classification
+        all_whatsapp_packets = []
         
-        # Refactoring approach: modify rebuild_flows to return flows with 'packets' included
-        # Or, just parse and do the logic in-place for now.
-        
-        # Let's just do it here:
-        from src.flow_builder import create_new_flow # This is not exported from flow_builder, need to fix
-        
-        # The issue is Task 3 implementation of rebuild_flows returns just summaries.
-        # Let me just fix rebuild_flows to return flows with packets and let it be used for both.
-        # This is a bit too much refactoring.
-        # Let me just keep the packet list in a dict by key during reconstruction.
-
+        for flow in flows:
+            sni, dns = None, None
+            for p in flow["packets"]:
+                if p.get("sni"): sni = p["sni"]
+                if p.get("dns_query"): dns = p["dns_query"]
+                
+            conf_domain, sig_domain = check_domain_matching(sni, dns)
+            conf_cidr, sig_cidr = check_cidr_matching(flow["server_ip"])
+            conf_inf, sig_inf = check_inference_matching(flow["server_ip"])
+            
+            signals = sig_domain + sig_cidr + sig_inf
+            if conf_domain == "high" or conf_cidr == "high":
+                flow["whatsapp_confidence"] = "high"
+                seed_confirmed_servers(flow["server_ip"])
+            elif conf_domain == "low" or conf_inf == "medium":
+                flow["whatsapp_confidence"] = "medium"
+            else:
+                flow["whatsapp_confidence"] = "none"
+            flow["whatsapp_signals"] = ",".join(signals)
+            
+            # Sub-classify
+            flow["media_type"] = guess_media_type(
+                flow["packet_count"], flow["upload_bytes"], 
+                flow["download_bytes"], flow["protocol_type"], False
+            )
+            
+            # Prepare packets for DB insertion
+            if flow["whatsapp_confidence"] in ["high", "medium"]:
+                for p in flow["packets"]:
+                    p["whatsapp_confidence"] = flow["whatsapp_confidence"]
+                    p["whatsapp_media_guess"] = flow["media_type"]
+                    p["flow_id"] = str(flow["flow_id"])
+                    all_whatsapp_packets.append(p)
             
         # Write flow_summary.csv
         flow_csv_path = os.path.join(output_dir, "flow_summary.csv")
         flow_fieldnames = list(flows[0].keys())
-        # Remove 'packets' and 'key' from csv output
         if 'packets' in flow_fieldnames: flow_fieldnames.remove('packets')
         if 'key' in flow_fieldnames: flow_fieldnames.remove('key')
         
@@ -75,9 +95,19 @@ def run_pipeline(pcap_path, output_dir):
             writer = csv.DictWriter(f, fieldnames=flow_fieldnames)
             writer.writeheader()
             for flow in flows:
-                # Clean up for CSV
                 row = {k: v for k, v in flow.items() if k in flow_fieldnames}
                 writer.writerow(row)
+        
+        # Insert into DB
+        insert_whatsapp_packets(os.path.basename(pcap_path), all_whatsapp_packets)
+        
+        # Group packets into parties
+        from src.party_grouper import group_packets_into_parties
+        group_packets_into_parties(os.path.basename(pcap_path))
+        
+        # Generate charts
+        from src.party_chart import generate_party_charts
+        generate_party_charts(os.path.basename(pcap_path), output_dir)
                 
         print(f"Pipeline complete. Outputs: {packet_csv_path}, {flow_csv_path}")
         
