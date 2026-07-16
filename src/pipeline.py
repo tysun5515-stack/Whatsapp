@@ -87,8 +87,20 @@ def run_pipeline(pcap_path, output_dir):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="WhatsApp Traffic Analysis Pipeline")
-    parser.add_argument("pcap_file", help="Path to the input PCAP file")
-    parser.add_argument("output_dir", help="Directory for CSV outputs")
+    parser.add_argument("--gui", action="store_true", help="Start the web interface")
+    parser.add_argument("pcap_file", nargs='?', help="Path to the input PCAP file")
+    parser.add_argument("output_dir", nargs='?', help="Directory for CSV outputs")
     args = parser.parse_args()
     
-    run_pipeline(args.pcap_file, args.output_dir)
+    if args.gui:
+        if args.pcap_file or args.output_dir:
+            parser.error("--gui takes no positional arguments; upload files via the web interface instead.")
+        
+        from src.webapp.app import create_app
+        app = create_app()
+        app.run(debug=True, port=5000)
+    else:
+        if not args.pcap_file or not args.output_dir:
+            parser.error("The following arguments are required: pcap_file, output_dir")
+        
+        run_pipeline(args.pcap_file, args.output_dir)
