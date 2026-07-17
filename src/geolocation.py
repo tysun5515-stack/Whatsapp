@@ -66,7 +66,6 @@ def geolocate(ip: str) -> Optional[GeoResult]:
         asn = 'Unknown'
         asn_org = 'Unknown'
         
-        print("DEBUG: Before city reader", file=sys.stderr)
         with geoip2.database.Reader(CITY_DB_PATH) as city_reader:
             city_response = city_reader.city(ip)
             country = city_response.country.name or 'Unknown'
@@ -74,15 +73,14 @@ def geolocate(ip: str) -> Optional[GeoResult]:
             latitude = city_response.location.latitude or 0.0
             longitude = city_response.location.longitude or 0.0
         
-        print("DEBUG: After city reader", file=sys.stderr)
         asn_db_path = os.environ.get("GEOLITE2_ASN_DB", ASN_DB_PATH)
-        print(f"DEBUG: Using ASN DB path: {asn_db_path}, Exists: {os.path.exists(asn_db_path)}", file=sys.stderr)
         if os.path.exists(asn_db_path):
             try:
-                with geoip2.database.Reader(asn_db_path) as asn_reader:
-                    asn_response = asn_reader.asn(ip)
-                    asn = str(asn_response.autonomous_system_number) or 'Unknown'
-                    asn_org = asn_response.autonomous_system_organization or 'Unknown'
+                asn_reader = geoip2.database.Reader(asn_db_path)
+                asn_response = asn_reader.asn(ip)
+                asn = str(asn_response.autonomous_system_number)
+                asn_org = asn_response.autonomous_system_organization
+                asn_reader.close()
             except Exception as e:
                 print(f"Optional ASN lookup failed for {ip}: {e}")
                 
