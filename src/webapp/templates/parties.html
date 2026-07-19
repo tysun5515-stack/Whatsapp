@@ -6,7 +6,10 @@
 </head>
 <body>
     <h1>Party Distribution</h1>
-    <p><a href="{{ url_for('results', file_id=file_id) }}">Back to Results</a></p>
+    <p>
+        <a href="{{ url_for('results', file_id=file_id) }}">Back to Results</a> | 
+        <a href="{{ url_for('geomap', file_id=file_id) }}">View Geographical Map</a>
+    </p>
     
     <h2>Visual Distribution</h2>
     <div style="display: flex; gap: 20px; justify-content: space-around; flex-wrap: wrap;">
@@ -31,6 +34,7 @@
                 <th>Packet Count</th>
                 <th>Total Bytes</th>
                 <th>Party Type</th>
+                <th>Caveat</th>
             </tr>
         </thead>
         <tbody>
@@ -43,6 +47,7 @@
                 <td>{{ party['packet_count'] }}</td>
                 <td>{{ party['total_bytes'] }}</td>
                 <td>{{ party['party_type'] }}</td>
+                <td style="color: darkorange; font-size: 0.9em;">{{ party['caveat'] }}</td>
             </tr>
             {% endfor %}
         </tbody>

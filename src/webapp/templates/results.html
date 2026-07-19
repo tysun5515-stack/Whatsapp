@@ -12,7 +12,8 @@
         <p>
             <a href="{{ url_for('download_packets', file_id=file_id) }}">Download Packet Metadata CSV</a> |
             <a href="{{ url_for('download_flows', file_id=file_id) }}">Download Flow Summary CSV</a> |
-            <a href="{{ url_for('parties', file_id=file_id) }}">View Party Distribution Charts</a>
+            <a href="{{ url_for('parties', file_id=file_id) }}">View Party Distribution Charts</a> |
+            <a href="{{ url_for('geomap', file_id=file_id) }}">View Geographical Map</a>
         </p>
         <h2>Flow Summary</h2>
         <table border="1">

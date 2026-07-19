@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}WhatsApp Forensic Analyzer{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<div class="app-shell">
+
+  <!-- ─── SIDEBAR ─────────────────────────────────────────── -->
+  <aside class="sidebar">
+
+    <div class="sidebar-header">
+      <div class="sidebar-title">WA Forensic</div>
+      <div class="sidebar-subtitle">Traffic Analysis Pipeline</div>
+    </div>
+
+    <!-- Case Selector -->
+    <div class="case-selector-wrap">
+      <label class="case-selector-label" for="case-select">Active Case</label>
+      <select class="case-selector" id="case-select" onchange="switchCase(this.value)">
+        <option value="">-- select upload --</option>
+        {% for u in all_uploads %}
+        <option value="{{ u.upload_id }}"
+          {% if u.upload_id == active_upload_id %}selected{% endif %}>
+          {{ u.filename | truncate(28, True, '..') }}
+        </option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <!-- Interface Navigation -->
+    <nav class="interface-nav">
+
+      <!-- Interface 1: Register PCAP — always enabled -->
+      <div class="interface-section">
+        <a href="{{ url_for('interface1') }}"
+           class="interface-btn {% if active_interface == 1 %}active{% endif %}">
+          <span class="iface-num">1</span>
+          <span class="iface-label">
+            Register PCAP
+            <span class="iface-sublabel">Upload &amp; hash a capture file</span>
+          </span>
+          <span class="status-dot none" id="dot-1"></span>
+        </a>
+      </div>
+
+      <!-- Interface 2: Filter WhatsApp — requires registered case -->
+      <div class="interface-section">
+        <a href="{% if active_upload_id %}{{ url_for('interface2', upload_id=active_upload_id) }}{% else %}#{% endif %}"
+           class="interface-btn
+             {% if active_interface == 2 %}active{% endif %}
+             {% if not active_upload_id %}disabled{% endif %}"
+           id="nav-iface2">
+          <span class="iface-num">2</span>
+          <span class="iface-label">
+            Filter WhatsApp
+            <span class="iface-sublabel">Run classification pipeline</span>
+          </span>
+          {% if active_upload %}
+          <span class="status-dot {{ active_upload.status }}" id="dot-2"></span>
+          {% else %}
+          <span class="status-dot none" id="dot-2"></span>
+          {% endif %}
+        </a>
+      </div>
+
+      <!-- Interface 3: Core Analysis — requires filtered case -->
+      <div class="interface-section">
+        <a href="{% if active_upload_id and active_upload and active_upload.status in ['filtered','analyzed'] %}{{ url_for('interface3', upload_id=active_upload_id) }}{% else %}#{% endif %}"
+           class="interface-btn
+             {% if active_interface == 3 %}active{% endif %}
+             {% if not active_upload_id or not active_upload or active_upload.status == 'registered' %}disabled{% endif %}"
+           id="nav-iface3">
+          <span class="iface-num">3</span>
+          <span class="iface-label">
+            Core Analysis
+            <span class="iface-sublabel">Parties, map, caveats</span>
+          </span>
+          {% if active_upload and active_upload.status == 'analyzed' %}
+          <span class="status-dot analyzed" id="dot-3"></span>
+          {% else %}
+          <span class="status-dot none" id="dot-3"></span>
+          {% endif %}
+        </a>
+      </div>
+
+    </nav>
+
+    <div class="sidebar-footer">
+      DB-1: pcap_registry.db<br>
+      DB-2: whatsapp_analysis.db
+    </div>
+  </aside>
+
+  <div class="divider-vert"></div>
+
+  <!-- ─── DASHBOARD ────────────────────────────────────────── -->
+  <main class="dashboard">
+    {% block dashboard %}{% endblock %}
+  </main>
+
+</div>
+
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>

@@ -1,0 +1,126 @@
+{% extends "layout.html" %}
+{% block title %}Filter WhatsApp — WA Forensic{% endblock %}
+
+{% block dashboard %}
+<div class="dash-header">
+  <div class="dash-title">2 — Filter WhatsApp Traffic</div>
+  <div class="dash-subtitle">
+    Runs pcap_reader &rarr; packet_parser &rarr; flow_builder &rarr; whatsapp_filter.
+    Classified packets (high/medium confidence only) are written to DB-2.
+  </div>
+</div>
+
+{% if not upload %}
+<div class="alert alert-warning">No case selected. Use the case selector in the sidebar.</div>
+{% else %}
+
+<!-- Case summary -->
+<div class="card" style="max-width:680px;">
+  <div class="kv-grid">
+    <span class="kv-label">Upload ID</span>
+    <span class="kv-value mono">{{ upload.upload_id }}</span>
+
+    <span class="kv-label">Filename</span>
+    <span class="kv-value mono">{{ upload.filename }}</span>
+
+    <span class="kv-label">SHA-256</span>
+    <span class="kv-value hash">{{ upload.sha256_hash }}</span>
+
+    <span class="kv-label">Size</span>
+    <span class="kv-value mono">{{ (upload.size_bytes / 1024) | round(1) }} KB</span>
+
+    <span class="kv-label">Status</span>
+    <span class="kv-value">
+      <span class="badge badge-{{ upload.status }}">{{ upload.status }}</span>
+    </span>
+  </div>
+</div>
+
+<!-- Run filter -->
+{% if upload.status == 'registered' %}
+<div class="alert alert-info">
+  This capture has not been filtered yet. Click below to run the WhatsApp classification pipeline.
+</div>
+{% else %}
+<div class="alert alert-success">
+  Filter already completed. You can re-run to overwrite DB-2 results.
+</div>
+{% endif %}
+
+<button class="btn btn-primary" id="btn-run-filter"
+        data-upload-id="{{ upload.upload_id }}">
+  Run WhatsApp Filter
+</button>
+
+<div id="filter-status" class="hidden" style="margin-top:10px;"></div>
+
+<!-- Summary stats (populated by JS after run, or from DB if already filtered) -->
+<div id="filter-summary" class="{% if not filter_stats %}hidden{% endif %}" style="margin-top:18px;">
+  <div class="section-header">Filter Results</div>
+  <div class="stats-row">
+    <div class="stat-box">
+      <div class="stat-value" id="stat-packets">{{ filter_stats.packet_count if filter_stats else '-' }}</div>
+      <div class="stat-label">Total Packets Parsed</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-value" id="stat-flows">{{ filter_stats.flow_count if filter_stats else '-' }}</div>
+      <div class="stat-label">Flows Reconstructed</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-value" id="stat-whatsapp">{{ filter_stats.whatsapp_count if filter_stats else '-' }}</div>
+      <div class="stat-label">WA Packets (DB-2)</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-value" id="stat-os" style="font-size:16px;">{{ filter_stats.detected_os if filter_stats else '-' }}</div>
+      <div class="stat-label">Detected OS</div>
+    </div>
+  </div>
+
+  {% if packets %}
+  <div class="section-header">Classified Packet Sample (first 50)</div>
+  <div style="overflow-x:auto;">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Timestamp</th>
+          <th>Src IP</th>
+          <th>Dst IP</th>
+          <th>Dst Port</th>
+          <th>Proto</th>
+          <th>Bytes</th>
+          <th>Confidence</th>
+          <th>Media</th>
+          <th>Sub-Activity</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for p in packets[:50] %}
+        <tr>
+          <td class="mono">{{ p.packet_no }}</td>
+          <td class="mono" style="font-size:10px;">{{ '%.4f' % p.timestamp }}</td>
+          <td class="mono">{{ p.src_ip }}</td>
+          <td class="mono">{{ p.dst_ip }}</td>
+          <td class="mono">{{ p.dst_port }}</td>
+          <td class="mono">{{ p.protocol }}</td>
+          <td class="mono">{{ p.length }}</td>
+          <td><span class="badge badge-{{ p.whatsapp_confidence }}">{{ p.whatsapp_confidence }}</span></td>
+          <td class="mono" style="font-size:10px;">{{ p.whatsapp_media_guess or '-' }}</td>
+          <td class="mono" style="font-size:10px;">{{ p.sub_activity or '-' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div style="margin-top:14px;">
+    <a class="btn btn-primary"
+       href="{{ url_for('interface3', upload_id=upload.upload_id) }}">
+      Proceed to Core Analysis &rarr;
+    </a>
+  </div>
+  {% endif %}
+</div>
+
+{% endif %}
+{% endblock %}

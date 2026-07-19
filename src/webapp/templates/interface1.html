@@ -1,0 +1,99 @@
+{% extends "layout.html" %}
+{% block title %}Register PCAP — WA Forensic{% endblock %}
+
+{% block dashboard %}
+<div class="dash-header">
+  <div class="dash-title">1 — Register PCAP</div>
+  <div class="dash-subtitle">Upload a capture file. SHA-256 is computed server-side and stored as write-once evidence.</div>
+</div>
+
+<!-- Upload form -->
+<div class="card" style="max-width:560px;">
+  <form id="upload-form" method="POST" action="/api/register" enctype="multipart/form-data">
+    <div class="form-group">
+      <label class="form-label" for="pcap-file">Capture File (.pcap / .pcapng)</label>
+      <input class="form-file" type="file" name="pcap_file" id="pcap-file"
+             accept=".pcap,.pcapng" required>
+    </div>
+    <button class="btn btn-primary" type="submit" id="btn-upload">
+      Register &amp; Hash
+    </button>
+    <div id="upload-status"></div>
+  </form>
+</div>
+
+{% if receipt %}
+<!-- Receipt -->
+<div class="section-header">Registration Receipt</div>
+<div class="card" style="max-width:640px;">
+  <div class="kv-grid">
+    <span class="kv-label">Upload ID</span>
+    <span class="kv-value mono">{{ receipt.upload_id }}</span>
+
+    <span class="kv-label">Filename</span>
+    <span class="kv-value mono">{{ receipt.filename }}</span>
+
+    <span class="kv-label">SHA-256</span>
+    <span class="kv-value hash">{{ receipt.sha256_hash }}</span>
+
+    <span class="kv-label">Size</span>
+    <span class="kv-value mono">{{ (receipt.size_bytes / 1024) | round(1) }} KB ({{ receipt.size_bytes }} bytes)</span>
+
+    <span class="kv-label">Registered At</span>
+    <span class="kv-value mono">{{ receipt.uploaded_at }}</span>
+
+    <span class="kv-label">Status</span>
+    <span class="kv-value">
+      <span class="badge badge-registered">{{ receipt.status }}</span>
+    </span>
+  </div>
+
+  <div style="margin-top:14px;">
+    <a class="btn btn-primary"
+       href="{{ url_for('interface2', upload_id=receipt.upload_id) }}">
+      Proceed to Filter &rarr;
+    </a>
+  </div>
+</div>
+{% endif %}
+
+{% if error %}
+<div class="alert alert-warning">{{ error }}</div>
+{% endif %}
+
+<!-- Recent uploads -->
+{% if all_uploads %}
+<div class="section-header" style="margin-top:24px;">All Registered Captures</div>
+<div class="card" style="overflow-x:auto;">
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Filename</th>
+        <th>SHA-256 (prefix)</th>
+        <th>Size</th>
+        <th>Registered At</th>
+        <th>Status</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for u in all_uploads %}
+      <tr>
+        <td class="mono">{{ u.filename }}</td>
+        <td class="hash">{{ u.sha256_hash[:16] }}&hellip;</td>
+        <td class="mono">{{ (u.size_bytes / 1024) | round(1) }} KB</td>
+        <td class="mono" style="font-size:10px;">{{ u.uploaded_at[:19] }}</td>
+        <td><span class="badge badge-{{ u.status }}">{{ u.status }}</span></td>
+        <td>
+          <a class="btn btn-ghost" style="font-size:11px; padding:3px 10px;"
+             href="{{ url_for('interface2', upload_id=u.upload_id) }}">
+            Open
+          </a>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+{% endblock %}

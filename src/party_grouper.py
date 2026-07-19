@@ -1,110 +1,156 @@
 """
-party_grouper.py: Groups whatsapp_packets into parties.
+party_grouper.py: Hierarchical 5-level party aggregation.
+
+Level 1: Transport flow partitioning (handled by flow_builder.py)
+Level 2: Entity-level aggregation — group by (remote_ip, remote_port, protocol),
+         ignoring ephemeral source port. Prevents one server from appearing as
+         dozens of parties due to port recycling.
+Level 3: Protocol session linking — TLS session ID (falls back to entity key)
+Level 4: Behavioral termination — OS-aware inactivity timeout (in flow_builder.py)
+Level 5: Temporal burst partitioning — 1-second gap threshold
 """
 
-import sqlite3
 import os
 import sys
 from collections import defaultdict
-from typing import Dict, Any
+from typing import Dict, Any, List, Tuple, Optional
 
-# Assuming DB_PATH is the same as in db.py
-DB_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'whatsapp.db'))
+# Need to import check_cidr_matching to classify Relays vs P2P
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from src.whatsapp_filter import check_cidr_matching
 
-def get_normalized_5tuple(packet: Dict[str, Any]):
+WELL_KNOWN_PORTS = {
+    443, 80, 53, 5222, 5223, 5228, 4244, 5242,  # WhatsApp
+    3478,                                          # STUN
+    8080, 8443, 993, 465, 587, 25,               # Other common
+}
+
+
+def get_entity_key(packet: Dict[str, Any]) -> Tuple:
     """
-    Reuses the 5-tuple normalization logic.
+    Level 2: Entity-level aggregation key.
+    Groups by (remote_ip, remote_port, protocol), ignoring ephemeral source port.
+    'Remote' = whichever side is on a well-known port; if neither, use lower IP.
     """
-    src_ip = packet["src_ip"]
-    dst_ip = packet["dst_ip"]
-    src_port = packet["src_port"]
-    dst_port = packet["dst_port"]
-    protocol = packet["protocol"]
-    
-    if (src_ip, src_port) < (dst_ip, dst_port):
-        return (src_ip, src_port, dst_ip, dst_port, protocol)
+    src_ip   = packet.get("src_ip", "")
+    dst_ip   = packet.get("dst_ip", "")
+    src_port = packet.get("src_port") or 0
+    dst_port = packet.get("dst_port") or 0
+    protocol = packet.get("protocol", "UNKNOWN")
+
+    if dst_port in WELL_KNOWN_PORTS:
+        return (dst_ip, dst_port, protocol)
+    elif src_port in WELL_KNOWN_PORTS:
+        return (src_ip, src_port, protocol)
     else:
-        return (dst_ip, dst_port, src_ip, src_port, protocol)
-
-def group_packets_into_parties(pcap_id: str):
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    cursor = conn.cursor()
-    
-    # 1. Read the 100 rows (or fewer)
-    cursor.execute("SELECT * FROM whatsapp_packets WHERE pcap_id = ?", (pcap_id,))
-    rows = cursor.fetchall()
-    
-    if not rows:
-        print(f"No packets found for pcap_id: {pcap_id}")
-        conn.close()
-        return
-
-    # 2. Group by normalized 5-tuple
-    parties = defaultdict(list)
-    for row in rows:
-        packet = dict(row)
-        # Re-derive 5-tuple for grouping
-        key = get_normalized_5tuple(packet)
-        parties[key].append(packet)
-        
-    # 3. Compute stats and insert
-    cursor.execute("DELETE FROM parties WHERE pcap_id = ?", (pcap_id,))
-    
-    total_packets_inserted = 0
-    
-    for key, packets in parties.items():
-        packet_count = len(packets)
-        total_bytes = sum(p['length'] for p in packets)
-        timestamps = [p['timestamp'] for p in packets]
-        first_seen = min(timestamps)
-        last_seen = max(timestamps)
-
-        # Classification of party_type
-        # key is (src_ip, src_port, dst_ip, dst_port, protocol)
-        src_port, dst_port = key[1], sys.maxsize if key[3] is None else key[3] # handle potential None ports
-        media_guess = packets[0].get('whatsapp_media_guess')
-
-        server_ports = {443, 5222}
-        peer_ports = {3478}
-
-        is_server_port = (src_port in server_ports) or (dst_port in server_ports)
-        is_peer_port = (src_port in peer_ports) or (dst_port in peer_ports)
-
-        if is_server_port or media_guess in ('message', 'photo', 'audio', 'video'):
-            party_type = 'client_to_server'
-        elif is_peer_port and media_guess in ('voice_call', 'video_call'):
-            party_type = 'peer_to_peer'
+        # Neither side is well-known; pick the "server" by lower IP string
+        if src_ip <= dst_ip:
+            return (dst_ip, dst_port, protocol)
         else:
-            party_type = 'unknown'
+            return (src_ip, src_port, protocol)
 
-        # Using a unique party_id based on the key and pcap_id to avoid cross-pcap uniqueness failures
-        party_id = f"{pcap_id}_{key[0]}_{key[1]}_{key[2]}_{key[3]}_{key[4]}"
 
-        cursor.execute("""
-            INSERT OR REPLACE INTO parties (
-                party_id, pcap_id, src_ip, dst_ip, src_port, dst_port, 
-                protocol, packet_count, total_bytes, first_seen, last_seen, party_type
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (party_id, pcap_id, key[0], key[2], key[1], key[3], key[4], 
-              packet_count, total_bytes, first_seen, last_seen, party_type))
+def classify_party_type(
+    remote_port: Optional[int],
+    protocol: str,
+    media_guess: Optional[str]
+) -> str:
+    """Classify the entity as client_to_server, peer_to_peer, or unknown."""
+    server_ports = {443, 80, 5222, 5223, 5228, 4244, 5242}
+    p2p_ports    = {3478}
 
-        
-        total_packets_inserted += packet_count
-        
-    conn.commit()
-    
-    # Verification
-    cursor.execute("SELECT SUM(packet_count) FROM parties WHERE pcap_id = ?", (pcap_id,))
-    sum_packet_count = cursor.fetchone()[0]
-    
-    print(f"Pcap ID: {pcap_id}")
-    print(f"Total packets in whatsapp_packets: {len(rows)}")
-    print(f"Sum of packet_count in parties: {sum_packet_count}")
-    print(f"Number of distinct parties: {len(parties)}")
-    for key, packets in parties.items():
-        print(f"  Party {key}: {len(packets)} packets")
-        
-    assert sum_packet_count == len(rows), "Packet count mismatch!"
-    
-    conn.close()
+    if remote_port in server_ports or media_guess in ('message', 'photo', 'audio', 'video'):
+        return 'client_to_server'
+    if remote_port in p2p_ports or media_guess in ('voice_call', 'video_call', 'call_signaling'):
+        return 'peer_to_peer'
+    return 'unknown'
+
+
+def group_into_entities(
+    packets: List[Dict[str, Any]],
+    upload_id: str,
+    os_hint: str = 'unknown',
+) -> List[Dict[str, Any]]:
+    """
+    Level 2 + 5: Group packets into entity-level parties with burst analysis.
+    Returns a list of party dicts ready for db_analysis.insert_parties().
+    """
+    # Level 2: entity grouping
+    entity_packets: Dict[Tuple, List[Dict[str, Any]]] = defaultdict(list)
+    for pkt in packets:
+        key = get_entity_key(pkt)
+        entity_packets[key].append(pkt)
+
+    parties = []
+    for (remote_ip, remote_port, protocol), pkts in entity_packets.items():
+        pkts_sorted = sorted(pkts, key=lambda p: p.get('timestamp', 0))
+
+        timestamps  = [p['timestamp'] for p in pkts_sorted if p.get('timestamp') is not None]
+        first_seen  = min(timestamps) if timestamps else 0.0
+        last_seen   = max(timestamps) if timestamps else 0.0
+        duration_s  = last_seen - first_seen
+
+        total_bytes  = sum(p.get('length', 0) for p in pkts_sorted)
+        packet_count = len(pkts_sorted)
+
+        # Local IPs observed talking to this entity
+        local_ips = set()
+        for p in pkts_sorted:
+            src, dst = p.get('src_ip'), p.get('dst_ip')
+            if src and src != remote_ip:
+                local_ips.add(src)
+            if dst and dst != remote_ip:
+                local_ips.add(dst)
+
+        # Derive dominant media / sub_activity
+        media_guesses = [p.get('whatsapp_media_guess') for p in pkts_sorted if p.get('whatsapp_media_guess')]
+        sub_activities = [p.get('sub_activity') for p in pkts_sorted if p.get('sub_activity')]
+
+        from collections import Counter
+        media_guess  = Counter(media_guesses).most_common(1)[0][0] if media_guesses else None
+        sub_activity = Counter(sub_activities).most_common(1)[0][0] if sub_activities else None
+
+        # Confidence: highest observed
+        confidences = [p.get('whatsapp_confidence', 'none') for p in pkts_sorted]
+        confidence  = 'high' if 'high' in confidences else ('medium' if 'medium' in confidences else 'none')
+
+        party_type = classify_party_type(remote_port, protocol, media_guess)
+
+        # 1. Look for STUN mapped address (public local IP)
+        public_local_ip = None
+        for p in pkts_sorted:
+            if p.get('stun_mapped_address'):
+                public_local_ip = p['stun_mapped_address'].split(':')[0]
+                break
+
+        # 2. Determine Relay vs P2P for calls
+        is_p2p = False
+        if party_type == 'peer_to_peer' or media_guess in ('voice_call', 'video_call'):
+            # Check if remote_ip is a Meta relay server
+            conf_cidr, _ = check_cidr_matching(remote_ip)
+            if conf_cidr == 'none':
+                is_p2p = True
+
+        party_id = f"{upload_id}_{remote_ip}_{remote_port}_{protocol}"
+
+        parties.append({
+            'party_id':     party_id,
+            'upload_id':    upload_id,
+            'remote_ip':    remote_ip,
+            'remote_port':  remote_port,
+            'protocol':     protocol,
+            'local_ips':    ','.join(sorted(local_ips)),
+            'public_local_ip': public_local_ip,
+            'packet_count': packet_count,
+            'total_bytes':  total_bytes,
+            'first_seen':   first_seen,
+            'last_seen':    last_seen,
+            'duration_s':   duration_s,
+            'party_type':   party_type,
+            'sub_activity': sub_activity,
+            'confidence':   confidence,
+            'os_hint':      os_hint,
+            'is_p2p':       is_p2p,
+        })
+
+    return sorted(parties, key=lambda p: p['packet_count'], reverse=True)

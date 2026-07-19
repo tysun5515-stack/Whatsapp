@@ -200,7 +200,10 @@ def parse_packet(packet_no: int, timestamp: float, link_type: int, raw_frame: by
         "is_quic": False,
         "dns_query": None,
         "sni": None,
-        "direction": None
+        "direction": None,
+        "ip_ttl": None,
+        "is_stun_binding": False,
+        "stun_mapped_address": None,
     }
     
     offset, ethertype = get_ip_header_offset(link_type, raw_frame)
@@ -226,6 +229,7 @@ def parse_packet(packet_no: int, timestamp: float, link_type: int, raw_frame: by
             return record
             
         ip_proto = raw_frame[offset + 9]
+        record["ip_ttl"] = raw_frame[offset + 8]   # TTL is byte 8 of IPv4 header
         
         # Extract IPs
         src_bytes = raw_frame[offset + 12 : offset + 16]
@@ -337,14 +341,49 @@ def parse_packet(packet_no: int, timestamp: float, link_type: int, raw_frame: by
                 record["dns_query"] = dns_query
                 
         # QUIC heuristic on UDP port 443:
-        # Long-header form bit (bit 7 set) + fixed bit (bit 6 set) on UDP/443.
-        # Code Comment: This heuristic is not definitive because QUIC is an evolving protocol,
-        # and other UDP applications might use similar bits. Additionally, QUIC's Initial packet
-        # payload is fully encrypted, meaning we cannot perform SNI extraction on QUIC flows.
         if src_port == 443 or dst_port == 443:
             if len(udp_payload) >= 1:
                 first_byte = udp_payload[0]
                 if (first_byte & 0xC0) == 0xC0:
                     record["is_quic"] = True
+
+        # STUN binding request/response parsing:
+        if len(udp_payload) >= 20:
+            try:
+                msg_type, msg_len, magic = struct.unpack('!HHI', udp_payload[0:8])
+                if magic == 0x2112A442:
+                    record["is_stun_binding"] = True
+                    
+                    if msg_type == 0x0101: # Binding Response
+                        idx = 20
+                        end = min(20 + msg_len, len(udp_payload))
+                        while idx + 4 <= end:
+                            attr_type, attr_len = struct.unpack('!HH', udp_payload[idx:idx+4])
+                            idx += 4
+                            if idx + attr_len > end:
+                                break
+                            
+                            if attr_type == 0x0020: # XOR-MAPPED-ADDRESS
+                                attr_val = udp_payload[idx:idx+attr_len]
+                                if len(attr_val) >= 8:
+                                    family = attr_val[1]
+                                    if family == 0x01: # IPv4
+                                        x_port = struct.unpack('!H', attr_val[2:4])[0]
+                                        x_ip = struct.unpack('!I', attr_val[4:8])[0]
+                                        
+                                        real_port = x_port ^ (magic >> 16)
+                                        real_ip = x_ip ^ magic
+                                        
+                                        real_ip_str = f"{(real_ip >> 24) & 0xFF}.{(real_ip >> 16) & 0xFF}.{(real_ip >> 8) & 0xFF}.{real_ip & 0xFF}"
+                                        record["stun_mapped_address"] = f"{real_ip_str}:{real_port}"
+                                        
+                            idx += attr_len
+                            padding = (4 - (attr_len % 4)) % 4
+                            idx += padding
+            except struct.error:
+                pass
+        # Method 2: WhatsApp STUN binding requests are consistently 86 bytes total frame
+        elif len(raw_frame) == 86 and (src_port == 3478 or dst_port == 3478):
+            record["is_stun_binding"] = True
                     
     return record

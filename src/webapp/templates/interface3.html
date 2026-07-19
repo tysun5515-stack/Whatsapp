@@ -1,0 +1,141 @@
+{% extends "layout.html" %}
+{% block title %}Core Analysis — WA Forensic{% endblock %}
+
+{% block dashboard %}
+<div class="dash-header">
+  <div class="dash-title">3 — Core Analysis</div>
+  <div class="dash-subtitle">
+    Entity-level party grouping &bull; GeoIP + rDNS &bull; World map &bull; VPN/CGNAT caveats
+  </div>
+</div>
+
+{% if not upload %}
+<div class="alert alert-warning">No case selected. Use the case selector in the sidebar.</div>
+{% elif upload.status == 'registered' %}
+<div class="alert alert-warning">
+  This case has not been filtered yet.
+  <a href="{{ url_for('interface2', upload_id=upload.upload_id) }}" class="btn btn-ghost" style="margin-left:8px;font-size:11px;">Go to Filter &rarr;</a>
+</div>
+{% else %}
+
+<!-- Run / re-run analysis -->
+<div style="display:flex; align-items:center; gap:12px; margin-bottom:14px;">
+  <button class="btn btn-primary" id="btn-run-analyze"
+          data-upload-id="{{ upload.upload_id }}">
+    {% if upload.status == 'analyzed' %}Re-run Analysis{% else %}Run Analysis{% endif %}
+  </button>
+  {% if upload.status == 'analyzed' %}
+  <span class="badge badge-analyzed">Analyzed</span>
+  {% endif %}
+</div>
+<div id="analyze-status" class="hidden" style="margin-bottom:12px;"></div>
+
+{% if parties %}
+
+<!-- Stats row -->
+<div class="stats-row">
+  <div class="stat-box">
+    <div class="stat-value">{{ parties | length }}</div>
+    <div class="stat-label">Parties (Entities)</div>
+  </div>
+  <div class="stat-box">
+    <div class="stat-value">{{ parties | sum(attribute='packet_count') }}</div>
+    <div class="stat-label">Total Packets</div>
+  </div>
+  <div class="stat-box">
+    <div class="stat-value">{{ parties | selectattr('party_type','eq','client_to_server') | list | length }}</div>
+    <div class="stat-label">Client &rarr; Server</div>
+  </div>
+  <div class="stat-box">
+    <div class="stat-value">{{ parties | selectattr('party_type','eq','peer_to_peer') | list | length }}</div>
+    <div class="stat-label">Peer &rarr; Peer</div>
+  </div>
+  <div class="stat-box">
+    <div class="stat-value">{{ caveated_count }}</div>
+    <div class="stat-label">Caveated Parties</div>
+  </div>
+</div>
+
+{% if caveated_count > 0 %}
+<div class="alert alert-warning" style="margin-bottom:14px;">
+  <strong>{{ caveated_count }} parties</strong> have geographic uncertainty warnings (VPN exit node or CGNAT). See Caveat column below.
+</div>
+{% endif %}
+
+<!-- Party Distribution Chart -->
+<div class="section-header">Packet Distribution by Party</div>
+<div class="card" style="padding:0; overflow:hidden;">
+  {{ bar_html | safe }}
+</div>
+
+<!-- World Map -->
+<div class="section-header">World Map — Traffic Flows</div>
+<div class="card map-wrap" style="height:480px; padding:0;">
+  {{ map_html | safe }}
+</div>
+
+<!-- Party Table -->
+<div class="section-header">Party Details</div>
+<div style="overflow-x:auto;">
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Remote IP</th>
+        <th>Port</th>
+        <th>Proto</th>
+        <th>Pkts</th>
+        <th>Bytes</th>
+        <th>Duration</th>
+        <th>Type</th>
+        <th>Sub-Activity</th>
+        <th>Confidence</th>
+        <th>Country</th>
+        <th>City</th>
+        <th>ASN Org</th>
+        <th>rDNS</th>
+        <th>Caveat</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for p in parties %}
+      <tr class="{% if p.caveat %}caveat-row{% endif %}">
+        <td class="mono">{{ p.remote_ip }}</td>
+        <td class="mono">{{ p.remote_port or '-' }}</td>
+        <td class="mono">{{ p.protocol }}</td>
+        <td class="mono">{{ p.packet_count }}</td>
+        <td class="mono">{{ p.total_bytes }}</td>
+        <td class="mono">{{ '%.1f' % (p.duration_s or 0) }}s</td>
+        <td>
+          <span class="badge badge-{% if p.party_type == 'client_to_server' %}server{% elif p.party_type == 'peer_to_peer' %}peer{% else %}unknown{% endif %}">
+            {{ p.party_type }}
+          </span>
+        </td>
+        <td class="mono" style="font-size:10px;">{{ p.sub_activity or '-' }}</td>
+        <td>
+          {% if p.confidence %}
+          <span class="badge badge-{{ p.confidence }}">{{ p.confidence }}</span>
+          {% else %}-{% endif %}
+        </td>
+        <td style="font-size:11px;">{{ p.geo_country or '-' }}</td>
+        <td style="font-size:11px;">{{ p.geo_city or '-' }}</td>
+        <td style="font-size:10px;">{{ p.asn_org or '-' }}</td>
+        <td class="mono" style="font-size:10px;">{{ p.rdns or '-' }}</td>
+        <td>
+          {% if p.caveat %}
+          <span class="caveat-text">&#9888; {{ p.caveat }}</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{% else %}
+<div class="alert alert-info">
+  No analysis data yet. Click <strong>Run Analysis</strong> above to group parties and geolocate.
+</div>
+{% endif %}
+
+{% endif %}
+{% endblock %}

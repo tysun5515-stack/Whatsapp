@@ -53,9 +53,16 @@ def init_db():
             longitude REAL,
             asn TEXT,
             asn_org TEXT,
-            looked_up_at REAL
+            looked_up_at REAL,
+            rdns_hostname TEXT
         )
     """)
+    # Migration: add rdns_hostname column if it doesn't exist yet
+    # (for databases created before Task 6)
+    cursor.execute("PRAGMA table_info(geo_cache)")
+    existing_columns = {row[1] for row in cursor.fetchall()}
+    if "rdns_hostname" not in existing_columns:
+        cursor.execute("ALTER TABLE geo_cache ADD COLUMN rdns_hostname TEXT")
     conn.commit()
     conn.close()
 
